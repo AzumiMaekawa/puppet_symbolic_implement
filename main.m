@@ -49,7 +49,6 @@ W = compute_potential_energy(x_i_sym, p_i_sym);
 
 % calculate x_i with implicit Euler time stepping scheme
  U_i = (h^2 / 2) * xdot2_i.' * M * xdot2_i + W + g.' * M * x_i_sym;
-% U_i = (h^2 / 2) * xdot2_i.' * M * xdot2_i + g.' * M * x_i_sym;% + W + g.' * M * x_i_sym;
 %%  compute gradient and hessian
 global gradU hessU;
 gradU = jacobian(U_i, x_i_sym);
@@ -58,16 +57,18 @@ hessU = jacobian(gradU, x_i_sym);
 
 %% Main Processing 
 % Initialize
-x_0 = zeros([3*n 1]);
-xdot_0 = zeros([3*n 1]);
-p_x = linspace(0, 0.5, n_p*T);
+x_0 = randn([3*n 1]) * 0.001;
+x_m1 = zeros([3*n 1]);
+t = linspace(0, 1, n_p*T);
+p_x = t.*t;
+%p_x = linspace(0, 0.5, n_p*T);
 %p_x = zeros([1 n_p*T]);
 p_y = zeros([1 n_p*T]);
 p_z = zeros([1 n_p*T]) + s_0(1);
 p = [p_x; p_y; p_z];
 p = p(:);
 
-x = forward_sim(p, x_0, xdot_0);
+x = forward_sim(p, x_0, x_m1);
 
 % show results
 x = reshape(x, [3,n*T]);
@@ -86,14 +87,14 @@ end
 
 title('the simulated location');
 xlabel('x'); ylabel('y'); zlabel('z');
-% xlim([-1 1]); ylim([-1 1]); zlim([-1 1]);
+xlim([-1 1]); ylim([-1 1]); zlim([-1 1]);
 
 %% forward simulation x(p)
-function x = forward_sim(p, x_0, xdot_0)
+function x = forward_sim(p, x_0, x_m1)
     global h n_p T p_i_sym gradU hessU x_im1_sym x_im2_sym x_im1 x_im2;
     x_i = x_0;
     x_im1 = x_0;
-    x_im2 = x_0;
+    x_im2 = x_m1;
 
     x = x_0;
     for i = 1:(T-1)
@@ -108,8 +109,8 @@ function x = forward_sim(p, x_0, xdot_0)
         % compute x_i with Newton's method
         fprintf('forward_sim :: %d/%d\n', i, T);
         % simplified one to see if it can be converged or not.
-        %x_i = Newtons_method(grad_i, hess_i, x_i, 1e-5, 20); %% -> succeeded to converge
-        x_i = gradient_descent(grad_i, x_i, 1e-5, 50);
+        x_i = Newtons_method(grad_i, hess_i, x_i, 1e-4, 20); %% -> succeeded to converge
+        % x_i = gradient_descent(grad_i, x_i, 1e-5, 50);
         x = [x; x_i];
 
         x_im2 = x_im1;
