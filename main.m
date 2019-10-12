@@ -60,10 +60,10 @@ hessU = jacobian(gradU, x_i_sym);
 x_0 = randn([3*n 1]) * 0.001;
 x_m1 = zeros([3*n 1]);
 t = linspace(0, 1, n_p*T);
-p_x = t.*t;
-%p_x = linspace(0, 0.5, n_p*T);
-%p_x = zeros([1 n_p*T]);
-p_y = zeros([1 n_p*T]);
+% p_x = t.*t;
+p_x = linspace(0, 0.5, n_p*T);
+p_y = sin(t*pi/2);
+%p_y = zeros([1 n_p*T]);
 p_z = zeros([1 n_p*T]) + s_0(1);
 p = [p_x; p_y; p_z];
 p = p(:);
@@ -87,11 +87,11 @@ end
 
 title('the simulated location');
 xlabel('x'); ylabel('y'); zlabel('z');
-xlim([-1 1]); ylim([-1 1]); zlim([-1 1]);
+% xlim([-1 1]); ylim([-1 1]); zlim([-1 1]);
 
 %% forward simulation x(p)
 function x = forward_sim(p, x_0, x_m1)
-    global h n_p T p_i_sym gradU hessU x_im1_sym x_im2_sym x_im1 x_im2;
+    global n_p T p_i_sym gradU hessU x_im1_sym x_im2_sym x_im1 x_im2;
     x_i = x_0;
     x_im1 = x_0;
     x_im2 = x_m1;
@@ -106,7 +106,7 @@ function x = forward_sim(p, x_0, x_m1)
         hess_i = subs(hess_i, x_im1_sym, x_im1);
         hess_i = subs(hess_i, x_im2_sym, x_im2);
 
-        % compute x_i with Newton's method
+        % compute x_i with Newton's method or gradient descent
         fprintf('forward_sim :: %d/%d\n', i, T);
         % simplified one to see if it can be converged or not.
         x_i = Newtons_method(grad_i, hess_i, x_i, 1e-4, 20); %% -> succeeded to converge
@@ -115,68 +115,5 @@ function x = forward_sim(p, x_0, x_m1)
 
         x_im2 = x_im1;
         x_im1 = x_i;
-    end
-end
-
-%% Newton Method to solve the optimized value
-function x_opt = Newtons_method(grad_i, hess_i, x_init, err, max_iteration)
-    global x_i_sym x_im1 x_im2 p_i
-    % for regularization
-    r = 1e-5;
-    I = eye(size(x_init,1));
-
-    x_k = x_init;
-
-    cnt = 0;
-    while(1)
-        cnt = cnt + 1;
-        fprintf('Newtons method :: %d/%d\n', cnt, max_iteration)
-        grad_k = subs(grad_i, x_i_sym, x_k);
-        hess_k = subs(hess_i, x_i_sym, x_k);
-        dx = double(-inv(hess_k + r*I) * grad_k);
-        disp(dx);
-        x_k = double(x_k + dx);
-        calcNorm = double(norm(dx));
-        if calcNorm < err
-            x_opt = x_k;
-            fprintf('converged :: %e at x_k[%f, %f, %f] \n', ...
-                calcNorm, x_opt(1), x_opt(2), x_opt(3))
-            break
-        elseif cnt == max_iteration
-            x_opt = x_k;
-            fprintf('reached to max iteration :: %e at x_k[%f, %f, %f] \n', ...
-                calcNorm, x_opt(1), x_opt(2), x_opt(3))
-            break
-        end
-    end
-end
-
-function x_opt = gradient_descent(grad_i, x_init, err, max_iteration)
-    global x_i_sym x_im1 x_im2
-
-    x_k = x_init;
-    r = 5e-4; % learning rate
-
-    cnt = 0;
-    while(1)
-        cnt = cnt + 1;
-        fprintf('Gradient descent :: %d/%d\n', cnt, max_iteration);
-        grad_k = subs(grad_i, x_i_sym, x_k);
-        disp(grad_k);
-        grad_k = double(grad_k);
-        x_k = x_k - r * grad_k;
-        disp(x_k);
-        calcNorm = double(norm(grad_k));
-        if calcNorm < err
-            x_opt = x_k;
-            fprintf('converged :: %e at x_k[%f,%f,%f] \n', ...
-                calcNorm, x_opt(1), x_opt(2), x_opt(3)); 
-            break
-        elseif cnt == max_iteration
-            x_opt = x_k;
-            fprintf('reached to max iteration :: %e at x_k[%f,%f,%f] \n', ...
-                calcNorm, x_opt(1), x_opt(2), x_opt(3));
-            break
-        end
     end
 end
