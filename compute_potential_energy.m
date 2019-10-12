@@ -15,7 +15,7 @@ end
 % psy: model of a string, piece-wise function
 W_string = 0;
 for i = 1:n_s
-    sym tmp_f; % being local to be readable
+    % sym tmp_f; % being local to be readable
     tmp_f = norm(x_i - p_i) - s_0(i);
     W_string = W_string + k * psy(tmp_f);
 end
