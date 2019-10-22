@@ -22,7 +22,7 @@ stringsPairs = reshape([1 1], [2, n_s]);
 % linkPairs = reshape([1 2 2 3], [2,2]);
 
 %% Compute gradient and hessian for forward simulation
-global psy p_i_sym xi_sym xim1_sym xim2_sym gradU hessU;
+global psy pi_sym xi_sym xim1_sym xim2_sym gradU hessU;
 
 if(debug)
     idx = linspace(-5,5,200);
@@ -33,7 +33,7 @@ if(debug)
 end
     
 xi_sym = sym('x%d', [3*n 1]);
-p_i_sym = sym('p%d', [3*n_p 1]);
+pi_sym = sym('p%d', [3*n_p 1]);
 xim1_sym = sym('x%d_m1', [3*n 1]);
 xim2_sym = sym('x%d_m2', [3*n 1]);
 
@@ -41,7 +41,7 @@ xim2_sym = sym('x%d_m2', [3*n 1]);
 xdot2_i = (xi_sym - 2 * xim1_sym + xim2_sym) / (h^2);
 
 % internal potential deformation energy (strings and trusses)
-W = compute_potential_energy(xi_sym, p_i_sym);
+W = compute_potential_energy(xi_sym, pi_sym);
 
 % To calculate x_i with implicit Euler time stepping scheme
 U_i = (h^2 / 2) * xdot2_i.' * M * xdot2_i + W + g.' * M * xi_sym;
@@ -52,12 +52,12 @@ hessU = jacobian(gradU, xi_sym);
 
 % compute G_i and its derivative
 % G_i depends only on x_i, x_im1, x_im2, and p_i
-global Gi_xi Gi_xim1 Gi_xim2 Gi_pi
+global DGi_Dxi DGi_Dxim1 DGi_Dxim2 DGi_Dpi
 Gi = gradU; % G_i is equal to gradient of U_i
-Gi_xi = hessU; % partial G / partial x_i (equal to hessian)
-Gi_xim1 = jacobian(Gi, xim1_sym);
-Gi_xim2 = jacobian(Gi, xim2_sym);
-Gi_pi = jacobian(Gi, p_i_sym);
+DGi_Dxi = hessU; % partial G / partial x_i (equal to hessian)
+DGi_Dxim1 = jacobian(Gi, xim1_sym);
+DGi_Dxim2 = jacobian(Gi, xim2_sym);
+DGi_Dpi = jacobian(Gi, pi_sym);
 
 
 
@@ -85,8 +85,10 @@ x_target = x_target(:);
 
 %% Main Processing 
 x = forward_sim(p, x_0, x_m1);
+dO_dp = compute_dOdp(x, x_0, x_m1, x_target, p, false);
 O = compute_objective(x, x_target, p, false);
 disp(O);
+
 
 
 %% show results
@@ -110,7 +112,7 @@ xlabel('x'); ylabel('y'); zlabel('z');
 
 %% forward simulation x(p)
 function x = forward_sim(p, x_0, x_m1)
-    global n_p T p_i_sym gradU hessU xim1_sym xim2_sym x_im1 x_im2;
+    global n_p T pi_sym gradU hessU xim1_sym xim2_sym x_im1 x_im2;
     x_i = x_0;
     x_im1 = x_0;
     x_im2 = x_m1;
@@ -118,10 +120,10 @@ function x = forward_sim(p, x_0, x_m1)
     x = [];
     for i = 1:T
         p_i = p((i-1)*3*n_p+1:i*3*n_p);
-        grad_i = subs(gradU, p_i_sym, p_i);
+        grad_i = subs(gradU, pi_sym, p_i);
         grad_i = subs(grad_i, xim1_sym, x_im1);
         grad_i = subs(grad_i, xim2_sym, x_im2);
-        hess_i = subs(hessU, p_i_sym, p_i);
+        hess_i = subs(hessU, pi_sym, p_i);
         hess_i = subs(hess_i, xim1_sym, x_im1);
         hess_i = subs(hess_i, xim2_sym, x_im2);
 
@@ -151,7 +153,7 @@ function O = compute_objective(x, x_target, p, periodic)
     pdot = zeros([3*n_p*T 1]);
     pdot(3*n_p+1:3*n_p*T) = (1/h) * (p(3*n_p+1:3*n_p*T) - p(1:3*n_p*(T-1)));
     pdot2 = zeros([3*n_p*T 1]);
-    pdot2(3*n_p+1:3*n_p*T) = (1/h) * (pdot(3*n_p+1:3*n_p*T) - p(1:3*n_p*(T-1)));
+    pdot2(3*n_p+1:3*n_p*T) = (1/h) * (pdot(3*n_p+1:3*n_p*T) - pdot(1:3*n_p*(T-1)));
 
     O_acc = norm(pdot2)^2;
 
@@ -166,69 +168,93 @@ function O = compute_objective(x, x_target, p, periodic)
     O = O_traj + O_acc + O_CycPos;
 end
 
+function dO_dp = compute_dOdp(x, x_0, x_im1, x_target, p, periodic)
+    global h n_p T
+
+    % objective O = O_traj(x, x_target) + O_acc(pdot2) + O_CycPos  
+    %% compute the derivative with respect to x
+    O_x = 2 * (x - x_target);
+
+    %% compute the derivative with respect to p
+    pdot = zeros([3*n_p*T 1]);
+    pdot(3*n_p+1:3*n_p*T) = (1/h) * (p(3*n_p+1:3*n_p*T) - p(1:3*n_p*(T-1)));
+    pdot2 = zeros([3*n_p*T 1]);
+    pdot2(3*n_p+1:3*n_p*T) = (1/h) * (pdot(3*n_p+1:3*n_p*T) - pdot(1:3*n_p*(T-1)));
+    pdot2_ip1 = [pdot2(3*n_p+1:end); zeros([3*n_p, 1])];
+    pdot2_ip2 = [pdot2_ip1(3*n_p+1:end); zeros([3*n_p, 1])];
+    O_p = (2./h^4) * (pdot2 - 2 * pdot2_ip1 + pdot2_ip2);
+
+    dx_dp = compute_dxdp(x, p, x_0, x_im1);
+
+    dO_dp = O_x * S + O_p;
+end
+
+
+
+
 %% compute the sensitivity term S = dx/dp
-function dx_dp = compute_dOdp(x, p, x_0, x_im1)
-    global n n_p Gi_xi Gi_xim1 Gi_xim2 Gi_pi xi_sym xim1_sym xim2_sym p_i_sym
+function dx_dp = compute_dxdp(x, p, x_0, x_im1)
+    global n n_p DGi_Dxi DGi_Dxim1 DGi_Dxim2 DGi_Dpi xi_sym xim1_sym xim2_sym pi_sym
 
     % compute partial derivative of G with respect to x
-    G_x = cell(T); % T*T cell
+    DG_Dx = cell(T); % T*T cell
     for row = 1:T
         for col = 1:T
-            if row = col
-                % Gi_xi
-                G_row_x_col =subs(Gi_xi, xi_sym, x(3*n*(col-1)+1:3*n*col));
-                if col =< 2 
-                    G_row_x_col = subs(G_row_x_col, xim1_sym, x_0);
+            if row == col
+                % DGi_Dxi
+                DG_row_Dx_col =subs(DGi_Dxi, xi_sym, x(3*n*(col-1)+1:3*n*col));
+                if col <= 2 
+                    DG_row_Dx_col = subs(DG_row_Dx_col, xim1_sym, x_0);
                 else
-                    G_row_x_col = subs(G_row_x_col, xim1_sym, x(3*n*(col-2)+1:3*n*(col-1)));
+                    DG_row_Dx_col = subs(DG_row_Dx_col, xim1_sym, x(3*n*(col-2)+1:3*n*(col-1)));
                 end
                 if col == 1
-                    G_row_x_col = subs(G_row_x_col, xim2_sym, x_im1)
+                    DG_row_Dx_col = subs(DG_row_Dx_col, xim2_sym, x_im1);
                 else
-                    G_row_x_col = subs(G_row_x_col, xim2_sym, x(3*n*(col-3)+1:3*n*(col-2)));
+                    DG_row_Dx_col = subs(DG_row_Dx_col, xim2_sym, x(3*n*(col-3)+1:3*n*(col-2)));
                 end
             elseif row == col + 1
-                % Gi_xim1
-                G_row_x_col = subs(Gi_xim1, xi_sym, x(3*n*col+1:3*n*(col+1));
-                G_row_x_col = subs(G_row_x_col, xim1_sym, x(3*n*(col-1)+1:3*n*col));
+                % DGi_Dxim1
+                DG_row_Dx_col = subs(DGi_Dxim1, xi_sym, x(3*n*col+1:3*n*(col+1)));
+                DG_row_Dx_col = subs(DG_row_Dx_col, xim1_sym, x(3*n*(col-1)+1:3*n*col));
                 if col == 1
-                   G_row_x_col = subs(G_row_x_col, xim2_sym, x_0);
+                   DG_row_Dx_col = subs(DG_row_Dx_col, xim2_sym, x_0);
                 else 
-                    G_row_x_col = subs(G_row_x_col, xim2_sym, x(e*n*(col-2)+1:3*n*(col-1));
+                    DG_row_Dx_col = subs(DG_row_Dx_col, xim2_sym, x(e*n*(col-2)+1:3*n*(col-1)));
                 end
             elseif row == col + 2
-                % Gi_xim2
-                G_row_x_col = subs(Gi_xim2, xi_sym, x(3*n*(col+1)+1:3*n*(col+2)));
-                G_row_x_col = subs(G_row_x_col, xim1_sym, x(3*n*col+1:3*n*(col+1)));
-                G_row_x_col = subs(G_row_x_col, xim2_sym, x(3*n*(col-1)+1:3*n*col));
+                % DGi_Dxim2
+                DG_row_Dx_col = subs(DGi_Dxim2, xi_sym, x(3*n*(col+1)+1:3*n*(col+2)));
+                DG_row_Dx_col = subs(DG_row_Dx_col, xim1_sym, x(3*n*col+1:3*n*(col+1)));
+                DG_row_Dx_col = subs(DG_row_Dx_col, xim2_sym, x(3*n*(col-1)+1:3*n*col));
             else
                 % other submatrices are zeros because Gi depends xi, xim1, xim2
-                G_row_x_col = zeros(3*n);
+                DG_row_Dx_col = zeros(3*n);
             end
 
-            G_x{row, col} = G_row_x_col;
+            DG_Dx{row, col} = DG_row_Dx_col;
         end
     end
 
     % compute partial derivative of G with respect to p
-    G_p = cell(T); % T*T cell
+    DG_Dp = cell(T); % T*T cell
     for row = 1:T
         for col = 1:T
             if row == col
-                G_row_p_col = subs(Gi_pi, p_i_sym, p(3*n_p*(col-1)+1:3*n_p*col));
+                DG_row_Dp_col = subs(DGi_Dpi, pi_sym, p(3*n_p*(col-1)+1:3*n_p*col));
             else
                 % other submatrices are zeros because Gi depends on pi
-                G_row_p_col = zeros(3*n_p);
+                DG_row_Dp_col = zeros(3*n_p);
             end
 
-            G_p{row, col} = G_row_p_col;
+            DG_Dp{row, col} = DG_row_Dp_col;
         end
     end
 
     % convert cell to matrix
-    G_x = cell2mat(G_x);
-    G_p = cell2mat(G_p);
+    DG_Dx = cell2mat(DG_Dx);
+    DG_Dp = cell2mat(DG_Dp);
 
     % sensitivity term
-    dx_dp = -inv(G_x) * G_p;
+    dx_dp = -inv(DG_Dx) * DG_Dp;
 end
