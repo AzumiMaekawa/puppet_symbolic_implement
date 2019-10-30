@@ -1,9 +1,10 @@
-clear all;
+clearvars;
 close all;
 clc;
 
 %% Init to prepare the values to simualte
-global n n_p n_s m M g T plannningHorizon h s_0 k epsilon stringsPairs debug;
+global n n_p n_s m M g T plannningHorizon h debug;
+global w_traj w_acc w_cyc s_0 k epsilon stringsPairs;
 n = 1; % number of mass points. n = 1 means a pendulum case
 n_p = 1; % number of attachment points
 n_s = 1; % number of strings
@@ -15,7 +16,12 @@ plannningHorizon = 1.0; % [s]
 h = plannningHorizon / T; % step size
 debug = false; % Enable debug mode to see what's happening
 
-s_0 = [0.5]; % lengthes of the strings
+% weight for objective
+w_traj = 0.1;
+w_acc = 0.03;
+w_cyc = 1;
+
+s_0 = 0.5; % lengthes of the strings
 k = 1e4; % spring constant
 epsilon = 0.001;
 stringsPairs = reshape([1 1], [2, n_s]);
@@ -79,36 +85,65 @@ f(s) = 519*s^7 + -1471*s^6 + 1632*s^5 - 900.6*s^4 + 265.1*s^3 - ...
 target_x = t;
 target_y = zeros([1 T]);
 target_z = double(f(t));
+%target_x = [linspace(0, 0.25, T/2) linspace(0.25, 0, T/2)];
+%target_y = zeros([1 T]);
+%target_z = zeros([1 T]);
 x_target = [target_x;target_y;target_z];
 x_target = x_target(:);
 
+% for regularization
+r = 1e-5;
+I = eye(size(3*n_p*T)); % same size as H
+
+%% compute 2nd derivative
+% compute DO2_Dx2
+DO2_Dx2 = 2 * eye(3*n*T) * w_traj;
+% O does not explicitly couple x and p,
+% and therefore the mixed derivative term vanishes.
+DO2_DxDp = zeros([3*n*T 3*n_p*T]);
+DO2_Dp2 = compute_DO2Dp2();
+
 
 %% Main Processing 
-x = forward_sim(p, x_0, x_m1);
-dO_dp = compute_dOdp(x, x_0, x_m1, x_target, p, false);
-O = compute_objective(x, x_target, p, false);
+counter = 0;
+max_main_iteration = 10;
+objective_criterion = 1;
+cost_array = zeros([max_main_iteration 1]);
+
+while(1)
+    counter = counter + 1;
+    x = forward_sim(p, x_0, x_m1);
+    S = compute_dxdp(x, p, x_0, x_m1);
+    dO_dp = compute_dOdp(x, x_target, p, S, false);
+
+    % compute H
+    H = S.' * DO2_Dx2 * S + 2 * S.' * DO2_DxDp + DO2_Dp2;
+
+    d = -inv(H + r*I) * dO_dp;
+    fprintf("d: ");
+    disp(d);
+    p = line_search(p, d, 1, 0.1, x, x_target, x_0, x_m1);
+
+    O = compute_objective(x, x_target, p, false);
+    fprintf("main loop :: %d, O: %f\n", counter, O);
+
+    cost_array(counter) = O;
+
+    if O < objective_criterion
+        fprintf("optimization completed!\n")
+        break
+    elseif counter > max_main_iteration
+        fprintf("reach max iteration!\n")
+        break
+    end
+end
 disp(O);
 
 
+%% draw results
+% objective
+draw_results();
 
-%% show results
-x = reshape(x, [3,n*T]);
-figure; scatter3(x(1,:),x(2,:),x(3,:)); 
-hold on;
-grid on;
-rotate3d;
-% draw initial posotion(red), final position(black)
-scatter3(x(1,1), x(2,1), x(3,1), 15,'r','filled'); % position, size, color, filled marker 
-scatter3(x(1,n*T), x(2,n*T), x(3,n*T),15,'k','filled');
-% draw control trajectory
-plot3(p_x, p_y, p_z,'Color', 'g'); % plot control position with green line
-for i = 1:T
-    plot3([p_x(i) x(1,i)], [p_y(i) x(2,i)], [p_z(1) x(3,i)],'Color','k');
-end
-
-title('the simulated location');
-xlabel('x'); ylabel('y'); zlabel('z');
- xlim([-0.25 0.75]); ylim([-0.5 0.5]); zlim([-0.5 0.5]);
 
 %% forward simulation x(p)
 function x = forward_sim(p, x_0, x_m1)
@@ -128,9 +163,9 @@ function x = forward_sim(p, x_0, x_m1)
         hess_i = subs(hess_i, xim2_sym, x_im2);
 
         % compute x_i with Newton's method or gradient descent
-        fprintf('forward_sim :: %d/%d\n', i, T);
+        % fprintf('forward_sim :: %d/%d\n', i, T);
         % simplified one to see if it can be converged or not.
-        x_i = Newtons_method(grad_i, hess_i, x_i, 1e-6, 20); %% -> succeeded to converge
+        x_i = Newtons_method(grad_i, hess_i, x_i, 1e-4, 20); %% -> succeeded to converge
         % x_i = gradient_descent(grad_i, x_i, 1e-5, 50);
         x = [x; x_i];
 
@@ -139,13 +174,40 @@ function x = forward_sim(p, x_0, x_m1)
     end
 end
 
+function p_updated = line_search(p, dp, step_size, scale_factor, x, x_target, x_0, x_m1)
+    % p: current state
+    % dp: search direction
+    % step_size: initial step length
+    % scale_factor: scaling factor (0 < scale_factor < 1)
+    % reocompute x for each test candidate p_updated to evaluate O(x(p_updated), p)
+    while 1
+        O = compute_objective(x, x_target, p, false);
+        fprintf("cost: %f\n", O);
+        p_updated = p + step_size * dp;
+        x_tmp = forward_sim(p_updated, x_0, x_m1);
+        O_updated = compute_objective(x_tmp, x_target, p_updated, false);
+        fprintf("updated cost: %f  at step_size: %f\n", O_updated, step_size);
+        if O_updated < O
+            break
+        end
+        step_size = step_size * scale_factor;
 
-function dO_dp = compute_dOdp(x, x_0, x_im1, x_target, p, periodic)
-    global h n_p T
+        if step_size < 1e-15
+            break
+        end
+    end
+end
+
+
+
+
+function dO_dp = compute_dOdp(x, x_target, p, S, periodic)
+    global h n_p T w_traj w_acc 
 
     % objective O = O_traj(x, x_target) + O_acc(pdot2) + O_CycPos  
     %% compute the derivative with respect to x
-    O_x = 2 * (x - x_target);
+    DO_Dx = 2 * (x - x_target);
+    DO_Dx = DO_Dx * w_traj;
 
     %% compute the derivative with respect to p
     pdot = zeros([3*n_p*T 1]);
@@ -154,9 +216,38 @@ function dO_dp = compute_dOdp(x, x_0, x_im1, x_target, p, periodic)
     pdot2(3*n_p+1:3*n_p*T) = (1/h) * (pdot(3*n_p+1:3*n_p*T) - pdot(1:3*n_p*(T-1)));
     pdot2_ip1 = [pdot2(3*n_p+1:end); zeros([3*n_p, 1])];
     pdot2_ip2 = [pdot2_ip1(3*n_p+1:end); zeros([3*n_p, 1])];
-    O_p = (2./h^4) * (pdot2 - 2 * pdot2_ip1 + pdot2_ip2);
+    % pdot2_im1 = [zeros([3*n_p 1]); pdot2(1:end-3*n_p)];
+    % pdot2_im2 = [zeros([3*n_p 1]); pdot2_im1(1:end-3*n_p)];
+    DO_Dp = (2./h^2) * (pdot2 - 2 * pdot2_ip1 + pdot2_ip2);
+    % DO_Dp = (2./h^2) * (pdot2 - 2 * pdot2_im1 + pdot2_im2);
+    DO_Dp = DO_Dp * w_acc;
 
-    dx_dp = compute_dxdp(x, p, x_0, x_im1);
+    % first order sensitivity term
+    % S = compute_dxdp(x, p, x_0, x_im1);
 
-    dO_dp = O_x * S + O_p;
+    dO_dp = S.' * DO_Dx + DO_Dp;
+end
+
+%% Compute H, which is a generalized Gauss-Newton approximation for the Hessian
+function H = compute_H(x, p, S, periodic)
+    global h n n_p T
+
+    % compute DO2_Dx2
+    DO2_Dx2 = 2 * eye(3*n*T);
+
+    % O does not explicitly couple x and p,
+    % and therefore the mixed derivative term vanishes.
+    DO2_DxDp = zeros([3*n*T 3*n_p*T]);
+
+    % compute DO2_Dp2
+    A = ones(3*n_p*T);
+    A = A - triu(A, 2) - tril(A, 0);
+    A = A + A.';
+    DO2_Dp2 = 6 * eye(3*n_p*T) - 4 * A;
+    DO2_Dp2 = DO2_Dp2 * 2. / (h^2);
+
+
+    % S = compute_dxdp(x, p, x_0, x_m1);
+    H = S.' * DO2_Dx2 * S + 2 * S.' * DO2_DxDp + DO2_Dp2;
+
 end
