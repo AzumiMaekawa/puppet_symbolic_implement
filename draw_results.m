@@ -21,7 +21,11 @@ p_y = p(2,:);
 p_z = p(3,:);
 plot3(p_x, p_y, p_z,'Color', 'g'); % plot control position with green line
 for i = 1:T
-    plot3([p_x(i) x(1,i)], [p_y(i) x(2,i)], [p_z(1) x(3,i)],'Color','k');
+    if norm(x(:,i) - p(:,i)) < s_0(1) + 1e-3
+        plot3([p_x(i) x(1,i)], [p_y(i) x(2,i)], [p_z(i) x(3,i)],'Color','k');
+    else
+        % TODO
+    end
 end
 title('the simulated location');
 xlabel('x'); ylabel('y'); zlabel('z');
