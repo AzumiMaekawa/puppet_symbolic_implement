@@ -25,4 +25,4 @@ for i = 1:T
 end
 title('the simulated location');
 xlabel('x'); ylabel('y'); zlabel('z');
-xlim([-0.25 0.75]); ylim([-0.5 0.5]); zlim([-0.2 0.8]);
+xlim([-0.15 0.85]); ylim([-0.5 0.5]); zlim([-0.2 0.8]);

@@ -17,8 +17,8 @@ h = plannningHorizon / T; % step size
 debug = false; % Enable debug mode to see what's happening
 
 % weight for objective
-w_traj = 0.1;
-w_acc = 0.03;
+w_traj = 0.15;
+w_acc = 0.000001;
 w_cyc = 1;
 
 s_0 = 0.5; % lengthes of the strings
@@ -68,11 +68,11 @@ DGi_Dpi = jacobian(Gi, pi_sym);
 
 
 % Initialize
-x_0 = randn([3*n 1]) * 0.001;
-x_m1 = zeros([3*n 1]);
+x_0 = randn([3*n 1]) * 0.0001;
+x_m1 = randn([3*n 1]) * 0.0001;
 t = linspace(0, plannningHorizon, T);
 % p_x = t.*t;
-p_x = linspace(0, 0.5, T);
+p_x = linspace(0, 0.7, T);
 %p_y = sin(t*pi/2);
 p_y = zeros([1 T]);
 p_z = zeros([1 T]) + s_0(1);
@@ -82,9 +82,9 @@ p = p(:);
 syms f(s);
 f(s) = 519*s^7 + -1471*s^6 + 1632*s^5 - 900.6*s^4 + 265.1*s^3 - ...
         44.22*s^2 + 4.268*s + 0.00026816;
-target_x = t;
+target_x = linspace(0, 0.7, T);
 target_y = zeros([1 T]);
-target_z = double(f(t));
+target_z = double(f(target_x));
 %target_x = [linspace(0, 0.25, T/2) linspace(0.25, 0, T/2)];
 %target_y = zeros([1 T]);
 %target_z = zeros([1 T]);
@@ -110,9 +110,9 @@ max_main_iteration = 10;
 objective_criterion = 1;
 cost_array = zeros([max_main_iteration 1]);
 
+x = forward_sim(p, x_0, x_m1);
 while(1)
     counter = counter + 1;
-    x = forward_sim(p, x_0, x_m1);
     S = compute_dxdp(x, p, x_0, x_m1);
     dO_dp = compute_dOdp(x, x_target, p, S, false);
 
@@ -120,19 +120,18 @@ while(1)
     H = S.' * DO2_Dx2 * S + 2 * S.' * DO2_DxDp + DO2_Dp2;
 
     d = -inv(H + r*I) * dO_dp;
-    fprintf("d: ");
-    disp(d);
-    p = line_search(p, d, 1, 0.1, x, x_target, x_0, x_m1);
+    [p, x] = line_search(p, d, 1, 0.1, x, x_target, x_0, x_m1);
 
     O = compute_objective(x, x_target, p, false);
     fprintf("main loop :: %d, O: %f\n", counter, O);
 
     cost_array(counter) = O;
 
-    if O < objective_criterion
-        fprintf("optimization completed!\n")
-        break
-    elseif counter > max_main_iteration
+    % if O < objective_criterion
+    %     fprintf("optimization completed!\n")
+    %     break
+    % end
+    if counter >= max_main_iteration
         fprintf("reach max iteration!\n")
         break
     end
@@ -174,25 +173,25 @@ function x = forward_sim(p, x_0, x_m1)
     end
 end
 
-function p_updated = line_search(p, dp, step_size, scale_factor, x, x_target, x_0, x_m1)
+function [p_updated, x_updated] = line_search(p, dp, step_size, scale_factor, x, x_target, x_0, x_m1)
     % p: current state
     % dp: search direction
     % step_size: initial step length
     % scale_factor: scaling factor (0 < scale_factor < 1)
     % reocompute x for each test candidate p_updated to evaluate O(x(p_updated), p)
+    O = compute_objective(x, x_target, p, false);
+    fprintf("cost: %f\n", O);
     while 1
-        O = compute_objective(x, x_target, p, false);
-        fprintf("cost: %f\n", O);
         p_updated = p + step_size * dp;
-        x_tmp = forward_sim(p_updated, x_0, x_m1);
-        O_updated = compute_objective(x_tmp, x_target, p_updated, false);
+        x_updated = forward_sim(p_updated, x_0, x_m1);
+        O_updated = compute_objective(x_updated, x_target, p_updated, false);
         fprintf("updated cost: %f  at step_size: %f\n", O_updated, step_size);
         if O_updated < O
             break
         end
         step_size = step_size * scale_factor;
 
-        if step_size < 1e-15
+        if step_size < 1e-10
             break
         end
     end
