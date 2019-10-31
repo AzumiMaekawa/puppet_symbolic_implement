@@ -21,7 +21,7 @@ p_y = p(2,:);
 p_z = p(3,:);
 plot3(p_x, p_y, p_z,'Color', 'g'); % plot control position with green line
 for i = 1:T
-    if norm(x(:,i) - p(:,i)) < s_0(1) + 1e-3
+    if norm(x(:,i) - p(:,i)) < s_0(1) + 1e-2
         plot3([p_x(i) x(1,i)], [p_y(i) x(2,i)], [p_z(i) x(3,i)],'Color','k');
     else
         % TODO
